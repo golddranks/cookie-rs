@@ -83,7 +83,7 @@ pub use jar::CookieJar;
 /// Represents variable lifetimes. Useful when borrowing from a `Cow`.
 /// The shorter lifetime represents the lifetime of the owned contents
 /// of `Cow`, and the longer is the borrowed.
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone)]
 pub enum VarLifetime<'short, 'long, T>
  where
     'long: 'short,
@@ -110,6 +110,20 @@ impl<'short, 'long, T: ?Sized> VarLifetime<'short, 'long, T> {
     }
 }
 
+impl<'short, 'long, T: ?Sized + std::cmp::PartialEq> std::cmp::PartialEq for VarLifetime<'short, 'long, T> {
+    fn eq(&self, other: &Self) -> bool { self.short().eq(other.short()) }
+}
+
+impl<'short, 'long, T: ?Sized + std::cmp::PartialEq> std::cmp::PartialEq<T> for VarLifetime<'short, 'long, T> {
+    fn eq(&self, other: &T) -> bool { self.short().eq(other) }
+}
+
+impl<'short, 'long, 'a, T: ?Sized + std::cmp::PartialEq + 'a> std::cmp::PartialEq<&'a T> for VarLifetime<'short, 'long, T> {
+    fn eq(&self, other: &&T) -> bool { self.short().eq(other) }
+}
+
+impl<'short, 'long, T: ?Sized + std::cmp::Eq> std::cmp::Eq for VarLifetime<'short, 'long, T> { }
+
 impl<'short, 'long, T: ?Sized + fmt::Display> fmt::Display for VarLifetime<'short, 'long, T> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         self.short().fmt(formatter)
@@ -120,6 +134,7 @@ impl<'short, 'long, T: ?Sized> std::ops::Deref for VarLifetime<'short, 'long, T>
     type Target = T;
     fn deref(&self) -> &Self::Target { self.short() }
 }
+
 
 #[derive(Debug, Clone)]
 enum CookieStr {
@@ -622,7 +637,7 @@ impl<'c> Cookie<'c> {
     /// assert_eq!(c.domain(), None);
     ///
     /// c.set_domain("rust-lang.org");
-    /// assert_eq!(c.domain(), Some("rust-lang.org"));
+    /// assert_eq!(Some("rust-lang.org"), c.domain());
     /// ```
     pub fn set_domain<D: Into<Cow<'static, str>>>(&mut self, domain: D) {
         self.domain = Some(CookieStr::Concrete(domain.into()));
