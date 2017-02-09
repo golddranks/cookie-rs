@@ -587,8 +587,8 @@ mod test {
         c.permanent().add(Cookie::new("test", "test"));
 
         let cookie = c.find("test").unwrap();
-        assert_eq!(cookie.value(), "test");
-        assert_eq!(c.permanent().find("test").unwrap().value(), "test");
+        assert_eq!(cookie.value().short(), "test");
+        assert_eq!(c.permanent().find("test").unwrap().value().short(), "test");
         assert!(cookie.expires().is_some());
         assert!(cookie.max_age().is_some());
     }

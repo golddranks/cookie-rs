@@ -80,6 +80,47 @@ pub use parse::ParseError;
 pub use builder::CookieBuilder;
 pub use jar::CookieJar;
 
+/// Represents variable lifetimes. Useful when borrowing from a `Cow`.
+/// The shorter lifetime represents the lifetime of the owned contents
+/// of `Cow`, and the longer is the borrowed.
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub enum VarLifetime<'short, 'long, T>
+ where
+    'long: 'short,
+    T: ?Sized,
+    &'short T: 'short,
+    &'long T: 'long,
+
+{
+    /// A variant with a short lifetime
+    Short(&'short T),
+    /// A variant with a long lifetime
+    Long(&'long T),
+}
+
+impl<'short, 'long, T: ?Sized> VarLifetime<'short, 'long, T> {
+
+    /// Gets the contents and in the case of the longer lifetime, coerses that to the shorter one
+    /// since the contents are alive at least that.
+    pub fn short(&self) -> &T {
+        match *self {
+            VarLifetime::Short(s) => s,
+            VarLifetime::Long(l) => l,
+        }
+    }
+}
+
+impl<'short, 'long, T: ?Sized + fmt::Display> fmt::Display for VarLifetime<'short, 'long, T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        self.short().fmt(formatter)
+    }
+}
+
+impl<'short, 'long, T: ?Sized> std::ops::Deref for VarLifetime<'short, 'long, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target { self.short() }
+}
+
 #[derive(Debug, Clone)]
 enum CookieStr {
     /// An string derived from indexes (start, end).
@@ -89,14 +130,6 @@ enum CookieStr {
 }
 
 impl CookieStr {
-    /// Whether this string is derived from indexes or not.
-    fn is_indexed(&self) -> bool {
-        match *self {
-            CookieStr::Indexed(..) => true,
-            CookieStr::Concrete(..) => false,
-        }
-    }
-
     /// Retrieves the string `self` corresponds to. If `self` is derived from
     /// indexes, the corresponding subslice of `string` is returned. Otherwise,
     /// the concrete string is returned.
@@ -104,14 +137,22 @@ impl CookieStr {
     /// # Panics
     ///
     /// Panics if `self` is an indexed string and `string` is None.
-    fn to_str<'s>(&'s self, string: Option<&'s Cow<str>>) -> &'s str {
-        if self.is_indexed() && string.is_none() {
-            panic!("Cannot convert indexed str to str without base string!")
-        }
+    fn to_str<'s, 'c>(&'s self, string: Option<&'s Cow<'c, str>>) -> VarLifetime<'s, 'c, str> {
 
         match *self {
-            CookieStr::Indexed(i, j) => &string.unwrap()[i..j],
-            CookieStr::Concrete(ref cstr) => &*cstr,
+            CookieStr::Indexed(i, j) => {
+                match string {
+                    Some(&Cow::Borrowed(ref b)) =>
+                        VarLifetime::Long(&b[i..j]),
+                    Some(&Cow::Owned(ref o)) =>
+                        VarLifetime::Short(&o[i..j]),
+                    None =>
+                        panic!("Cannot convert indexed str to str without base string!"),
+                }
+            },
+            CookieStr::Concrete(ref cstr) => {
+                VarLifetime::Short(&*cstr)
+            },
         }
     }
 }
@@ -312,8 +353,8 @@ impl<'c> Cookie<'c> {
     /// assert_eq!(c.name(), "name");
     /// ```
     #[inline]
-    pub fn name(&self) -> &str {
-        self.name.to_str(self.cookie_string.as_ref())
+    pub fn name<'s>(&'s self) -> VarLifetime<'s, 'c, str> {
+        self.name.to_str::<'s, 'c>(self.cookie_string.as_ref())
     }
 
     /// Returns the value of `self`.
@@ -327,8 +368,8 @@ impl<'c> Cookie<'c> {
     /// assert_eq!(c.value(), "value");
     /// ```
     #[inline]
-    pub fn value(&self) -> &str {
-        self.value.to_str(self.cookie_string.as_ref())
+    pub fn value<'s>(&'s self) -> VarLifetime<'s, 'c, str> {
+        self.value.to_str::<'s, 'c>(self.cookie_string.as_ref())
     }
 
     /// Returns the name and value of `self` as a tuple of `(name, value)`.
@@ -342,7 +383,7 @@ impl<'c> Cookie<'c> {
     /// assert_eq!(c.name_value(), ("name", "value"));
     /// ```
     #[inline]
-    pub fn name_value(&self) -> (&str, &str) {
+    pub fn name_value<'s>(&'s self) -> (VarLifetime<'s, 'c, str> , VarLifetime<'s, 'c, str> ) {
         (self.name(), self.value())
     }
 
@@ -411,9 +452,9 @@ impl<'c> Cookie<'c> {
     /// assert_eq!(c.path(), Some("/sub"));
     /// ```
     #[inline]
-    pub fn path(&self) -> Option<&str> {
+    pub fn path<'s>(&'s self) -> Option<VarLifetime<'s, 'c, str>> {
         match self.path {
-            Some(ref c) => Some(c.to_str(self.cookie_string.as_ref())),
+            Some(ref c) => Some(c.to_str::<'s, 'c>(self.cookie_string.as_ref())),
             None => None,
         }
     }
@@ -432,9 +473,9 @@ impl<'c> Cookie<'c> {
     /// assert_eq!(c.domain(), Some("crates.io"));
     /// ```
     #[inline]
-    pub fn domain(&self) -> Option<&str> {
+    pub fn domain<'s>(&'s self) -> Option<VarLifetime<'s, 'c, str>> {
         match self.domain {
-            Some(ref c) => Some(c.to_str(self.cookie_string.as_ref())),
+            Some(ref c) => Some(c.to_str::<'s, 'c>(self.cookie_string.as_ref())),
             None => None,
         }
     }
@@ -705,13 +746,13 @@ impl<'a, 'b> PartialEq<Cookie<'b>> for Cookie<'a> {
         }
 
         match (self.path(), other.path()) {
-            (Some(a), Some(b)) if a.eq_ignore_ascii_case(b) => {}
+            (Some(ref a), Some(ref b)) if a.eq_ignore_ascii_case(&*b) => {}
             (None, None) => {}
             _ => return false,
         };
 
         match (self.domain(), other.domain()) {
-            (Some(a), Some(b)) if a.eq_ignore_ascii_case(b) => {}
+            (Some(ref a), Some(ref b)) if a.eq_ignore_ascii_case(&*b) => {}
             (None, None) => {}
             _ => return false,
         };
