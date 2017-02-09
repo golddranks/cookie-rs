@@ -100,11 +100,19 @@ pub enum VarLifetime<'short, 'long, T>
 
 impl<'short, 'long, T: ?Sized> VarLifetime<'short, 'long, T> {
 
-    /// Gets the contents and in the case of the longer lifetime, coerses that to the shorter one
+    /// Gets the contents with a short lifetime and in the case of the longer lifetime, coerses that to the shorter one
     /// since the contents are alive at least that.
-    pub fn short(&self) -> &T {
+    pub fn short(&self) -> &'short T {
         match *self {
             VarLifetime::Short(s) => s,
+            VarLifetime::Long(l) => l,
+        }
+    }
+
+    /// Gets the contents with a long lifetime and in the case of the shorter lifetime, panics.
+    pub fn long_or_panic(&self) -> &'long T {
+        match *self {
+            VarLifetime::Short(_) => panic!("VarLifetime contained a value with a short lifetime!"),
             VarLifetime::Long(l) => l,
         }
     }
